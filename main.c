@@ -11,11 +11,11 @@
 #include <fcntl.h>        // Для флагов открытия файлов
 
 
-// Максимальная длина пути и строки(необязательно, но на всякий случай)
+// Максимальная длина пути и строки
 #define MAX_PATH_LEN 1024
 #define MAX_LINE_LEN 4096
 
-// Флаг игнорирования регистра символовy
+// Флаг игнорирования регистра символов
 int ignore_case = 0;
 
 /*
@@ -23,54 +23,81 @@ int ignore_case = 0;
  * Сравнение символов с учетом/без учета регистра
  * Обработка многобайтовых кодировок
  */
+
+ int is_word_boundary(wchar_t ch) {
+    return iswspace(ch) || iswpunct(ch) || ch == L'\0';
+}
+
 int strstr_unicode(const char *haystack, const char *needle, int ignore_case) {
-    // Инициализация состояния преобразования
     mbstate_t state = {0};
     const char *h = haystack;
-    const char *n = needle;
     
-    // Цикл по символам строки
     while (*h) {
         const char *h_pos = h;
-        const char *n_pos = n;
+        const char *n = needle;
         mbstate_t h_state = state;
         mbstate_t n_state = state;
         
-        // Сравнение последовательности символов
-        while (*h_pos && *n_pos) {
+        // Проверяем, что перед словом граница (начало строки или не-буква)
+        if (h != haystack) {
+            wchar_t prev_ch;
+            const char *prev_pos = h;
+            mbstate_t prev_state = {0};
+            mbrtowc(&prev_ch, prev_pos, MB_CUR_MAX, &prev_state);
+            if (!is_word_boundary(prev_ch)) {
+                // Переходим к следующему символу
+                wchar_t dummy;
+                size_t advance = mbrtowc(&dummy, h, MB_CUR_MAX, &state);
+                if (advance == (size_t)-1 || advance == (size_t)-2) {
+                    h++;
+                    state = (mbstate_t){0};
+                } else {
+                    h += advance;
+                }
+                continue;
+            }
+        }
+        
+        // Проверяем совпадение слова
+        int match = 1;
+        while (*h_pos && *n) {
             wchar_t h_ch, n_ch;
-            // Преобразование многобайтовых символов
             size_t h_len = mbrtowc(&h_ch, h_pos, MB_CUR_MAX, &h_state);
-            size_t n_len = mbrtowc(&n_ch, n_pos, MB_CUR_MAX, &n_state);
+            size_t n_len = mbrtowc(&n_ch, n, MB_CUR_MAX, &n_state);
             
-            // Проверка на ошибки преобразования
             if (h_len == (size_t)-1 || h_len == (size_t)-2 ||
                 n_len == (size_t)-1 || n_len == (size_t)-2) {
                 return 0;
             }
             
-            // Приведение к нижнему регистру при необходимости
             if (ignore_case) {
                 h_ch = towlower(h_ch);
                 n_ch = towlower(n_ch);
             }
             
-            // Выход при несовпадении символов
-            if (h_ch != n_ch) break;
+            if (h_ch != n_ch) {
+                match = 0;
+                break;
+            }
             
-            // Перемещение указателей
             h_pos += h_len;
-            n_pos += n_len;
+            n += n_len;
         }
         
-        // Возврат при успешном нахождении
-        if (*n_pos == '\0') return 1;
+        // Проверяем, что после слова граница (конец строки или не-буква)
+        if (match && *n == '\0') {
+            wchar_t next_ch;
+            mbstate_t next_state = {0};
+            mbrtowc(&next_ch, h_pos, MB_CUR_MAX, &next_state);
+            if (is_word_boundary(next_ch)) {
+                return 1;
+            }
+        }
         
-        // Переход к следующему символу
+        // Переходим к следующему символу
         wchar_t dummy;
         size_t advance = mbrtowc(&dummy, h, MB_CUR_MAX, &state);
         if (advance == (size_t)-1 || advance == (size_t)-2) {
-            // Сброс состояния при ошибке
             h++;
             state = (mbstate_t){0};
         } else {
@@ -80,7 +107,6 @@ int strstr_unicode(const char *haystack, const char *needle, int ignore_case) {
     
     return 0;
 }
-
 /*
  * Поиск в файле с использованием отображения в память
  * Обработка строк файла
